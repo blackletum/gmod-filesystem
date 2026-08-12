@@ -86,6 +86,8 @@
 
 // GMod
 extern ConVar fs_tellmeyoursecrets;
+// RaphaelIT7: A special flag to mark the workshop/ path
+#define PATH_FLAG_ISWORKSHOP (1<<9)
 
 extern CUtlSymbolTableMT g_PathIDTable;
 
@@ -547,6 +549,12 @@ public:
 		// GMOD - RaphaelIT7: I assume it's related to https://garry.net/posts/vpk-search-paths
 		// Verify: I have no idea what decides to set it / seems to be some additional flag checked for in ::NewSearchPath?
 		bool				m_bVPKHack;
+
+		// RaphaelIT7:
+		// Special flag to avoid disk lookup and instead call the Addon::FileSystem
+		// This will also avoid any useless lookups -> avoid std::string allocations
+		// as Addon::FileSystem functions use std::string for arguments very often
+		bool				m_bIsWorkshop;
 
 	private:
 		CUtlSymbol			m_Path;
