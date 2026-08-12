@@ -394,11 +394,8 @@ void CFileSystem_Stdio::FreeOptimalReadBuffer( void *p )
 //-----------------------------------------------------------------------------
 // Purpose: low-level filesystem wrapper
 //-----------------------------------------------------------------------------
-FILE *CFileSystem_Stdio::FS_fopen( const char *filenameT, const char *options, unsigned flags, int64 *size )
+FILE *CFileSystem_Stdio::FS_fopen( const char *filename, const char *options, unsigned flags, int64 *size )
 {
-	char filename[ MAX_PATH ];
-	CBaseFileSystem::FixUpPath ( filenameT, filename );
-
 	alignas(FILE *) CStdFilesystemFile *pFile = nullptr;
 
 #ifdef _WIN32
