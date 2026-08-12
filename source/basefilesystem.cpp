@@ -2123,6 +2123,24 @@ void CBaseFileSystem::HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAb
 {
 	openInfo.m_pFileHandle = nullptr;
 
+	// GMod
+	if ( openInfo.m_pSearchPath && openInfo.m_pSearchPath->m_bIsWorkshop )
+	{
+		Addon::FileHandle *pHandle = m_AddonFileSystem.GetFileEntry( openInfo.m_AbsolutePath );
+		if ( pHandle )
+		{
+			openInfo.m_pFileHandle = new CFileHandle( this );
+			openInfo.m_pFileHandle->m_pAddonFileHandle = pHandle;
+			openInfo.m_pFileHandle->m_type = FT_NORMAL;
+			openInfo.m_pFileHandle->m_nLength = pHandle->Size();
+
+			openInfo.SetResolvedFilename( openInfo.m_AbsolutePath );
+		}
+
+		// RaphaelIT7: We avoid disk lookup for workshop/ as we expect it to not exist anyways
+		return;
+	}
+
 	int64 size;
 	FILE *fp = Trace_FOpen( openInfo.m_AbsolutePath, openInfo.m_pOptions, openInfo.m_Flags, &size );
 	if ( fp )
@@ -2151,18 +2169,6 @@ void CBaseFileSystem::HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAb
 
 		// GMod - Returns on hit
 		return;
-	}
-
-	// RaphaelIT7 (ToDo): We should be able to optimize this very easily.
-	Addon::FileHandle *pHandle = m_AddonFileSystem.GetFileEntry( openInfo.m_AbsolutePath );
-	if ( pHandle )
-	{
-		openInfo.m_pFileHandle = new CFileHandle( this );
-		openInfo.m_pFileHandle->m_pAddonFileHandle = pHandle;
-		openInfo.m_pFileHandle->m_type = FT_NORMAL;
-		openInfo.m_pFileHandle->m_nLength = pHandle->Size();
-
-		openInfo.SetResolvedFilename( openInfo.m_AbsolutePath );
 	}
 }
 
@@ -3705,13 +3711,18 @@ bool CBaseFileSystem::IsDirectory( const char *pFileName, const char *pathID )
 			V_FixSlashes( pTmpFileName );
 
 			// GMod
-			if ( m_AddonFileSystem.IsDirectory( pTmpFileName ) )
-				return true;
-
-			if ( FS_stat( pTmpFileName, &buf ) != -1 )
+			if ( pSearchPath->m_bIsWorkshop )
 			{
-				if ( buf.st_mode & _S_IFDIR )
+				if ( m_AddonFileSystem.IsDirectory( pTmpFileName ) )
 					return true;
+			}
+			else
+			{
+				if ( FS_stat( pTmpFileName, &buf ) != -1 )
+				{
+					if ( buf.st_mode & _S_IFDIR )
+						return true;
+				}
 			}
 		}
 	}
@@ -4643,6 +4654,7 @@ CBaseFileSystem::CSearchPath::CSearchPath( void )
 	m_bIsRemotePath = false;
 	m_pPackedStore = nullptr;
 	m_bIsTrustedForPureServer = false;
+	m_bIsWorkshop = false;
 }
 
 const char *CBaseFileSystem::CSearchPath::GetDebugString() const
@@ -5574,6 +5586,7 @@ CBaseFileSystem::CSearchPath* CBaseFileSystem::NewSearchPath( SearchPathAdd_t ad
 	// bit 8 = VPK hack flag?
 
 	const bool bVPKHack = (addType >> 8) & 1;
+	const bool bIsWorkshop = (addType & PATH_FLAG_ISWORKSHOP) != 0;
 	CPathPriorityGroup_t priorityGroup = static_cast<CPathPriorityGroup_t>( ( addType & PATH_PRIORITY_MASK ) >> 1 );
 	if ( priorityGroup == GN_UNSET )
 		priorityGroup = GN_ENGINECORE;
@@ -5607,6 +5620,7 @@ CBaseFileSystem::CSearchPath* CBaseFileSystem::NewSearchPath( SearchPathAdd_t ad
 
 	result->m_PriorityGroupID = priorityGroup;
 	result->m_bVPKHack = bVPKHack;
+	result->m_bIsWorkshop = bIsWorkshop;
 	return result;
 }
 
@@ -5817,9 +5831,9 @@ void CBaseFileSystem::GMOD_SetupDefaultPaths( const char *pszGamePath, const cha
 	//
 	// Workshop
 	//
-	AddSearchPath( ( m_strModPath + "/workshop" ).c_str(), "GAME", PRIORITY_GROUP_TAIL( GN_GMODCORE ) );
-	AddSearchPath( ( m_strModPath + "/workshop" ).c_str(), "workshop", PRIORITY_GROUP_TAIL( GN_GMODCORE ) );
-	AddSearchPath( ( m_strModPath + "/workshop" ).c_str(), "thirdparty", PRIORITY_GROUP_TAIL( GN_GMODCORE ) );
+	AddSearchPath( ( m_strModPath + "/workshop" ).c_str(), "GAME", PRIORITY_GROUP_TAIL( GN_GMODCORE ) | PATH_FLAG_ISWORKSHOP );
+	AddSearchPath( ( m_strModPath + "/workshop" ).c_str(), "workshop", PRIORITY_GROUP_TAIL( GN_GMODCORE ) | PATH_FLAG_ISWORKSHOP );
+	AddSearchPath( ( m_strModPath + "/workshop" ).c_str(), "thirdparty", PRIORITY_GROUP_TAIL( GN_GMODCORE ) | PATH_FLAG_ISWORKSHOP );
 
 	//
 	// GMod content
