@@ -520,18 +520,15 @@ public:
 	class CDiskFileTree : public CRefCounted<CRefCountServiceMT>
 	{
 	public:
-		explicit CDiskFileTree( const char *pszRoot );
+		void BuildTree( const char *pszRoot );
 		FileCacheEntry ContainsPath( const char *pszAbsolutePath ) const;
-		const char *GetRoot() const { return m_strRoot.c_str(); }
+
+		void AddPath( const char *pszAbsolutePath, FileCacheEntry type );
+		void RemovePath( const char *pszAbsolutePath );
+		void RenamePath( const char *pszOldAbsolutePath, const char *pszNewAbsolutePath );
 
 	private:
 		void RecursiveTraverse( const char *pszFolderPath );
-
-		// Absolute path though all entries in m_FileList are also absolute
-		// ToDo:
-		// Consider making m_FileList entires relative to m_strRoot
-		// though would introduce an extra step... memory vs speed. Lets test it later
-		std::string m_strRoot;
 
 		// We use StringHash & StringEq so that when searching we do not allocate an std::string
 		unordered_map<std::string, FileCacheEntry, StringHash, StringEq> m_FileList;
@@ -564,9 +561,6 @@ public:
 
 		bool IsMapPath() const;
 
-		// RaphaelIT7:
-		// Always use this one for checking!
-		const CDiskFileTree *GetDiskFileTree() const { return m_pDiskFileTree; }
 		FileCacheEntry ContainsPath( const char *pszRelativePath ) const;
 		inline void MarkDiskTracking() { m_bTrackDisk = true; }
 		// Called once all values are set since inside NewSearchPath we got nothing to work with
@@ -612,7 +606,6 @@ public:
 		// If true then we setup a file watcher to update on disk changes
 		// Else we expect the folder to never change anyways
 		bool				m_bTrackDisk;
-		CDiskFileTree		*m_pDiskFileTree;
 	};
 
 	class CSearchPathsVisits
@@ -786,7 +779,7 @@ protected:
 	virtual int FS_feof( FILE *fp ) = 0;
 	size_t FS_fread( OUT_BYTECAP(size) void *dest, size_t size, FILE *fp ) { return FS_fread( dest, (size_t)-1, size, fp ); }
 	virtual size_t FS_fread( OUT_BYTECAP(destSize) void *dest, size_t destSize, size_t size, FILE *fp ) = 0;
-    virtual size_t FS_fwrite( IN_BYTECAP(size) const void *src, size_t size, FILE *fp ) = 0;
+	virtual size_t FS_fwrite( IN_BYTECAP(size) const void *src, size_t size, FILE *fp ) = 0;
 	virtual bool FS_setmode( FILE *, FileMode_t ) { return false; }
 	virtual size_t FS_vfprintf( FILE *fp, const char *fmt, va_list list ) = 0;
 	virtual int FS_ferror( FILE *fp ) = 0;
@@ -966,10 +959,6 @@ public: // GMOD
 	// RaphaelIT7: Called when a searchpath should watch for any disk changes
 	void SetupDiskTracking( CSearchPath *pSearchPath );
 
-	// It can return a parent tree! It will always return one -> create one if needed
-	// Though CDiskFileTree::ContainsPath accounts for that :)
-	CDiskFileTree *FindFileTree( const char *pszAbsoluteFolder );
-
 private: // GMOD
 	CLanguage m_Language;
 	GameDepot::System m_GameDepotSystem;
@@ -981,7 +970,7 @@ private: // GMOD
 	std::string m_strGamePath = "";
 	std::string m_strModPath = "";
 
-	std::vector<CDiskFileTree*> m_DiskFileTrees;
+	CDiskFileTree m_DiskFileTree;
 };
 
 inline const CUtlSymbol& CBaseFileSystem::CPathIDInfo::GetPathID() const

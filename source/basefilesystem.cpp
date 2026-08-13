@@ -2194,21 +2194,12 @@ void CBaseFileSystem::HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAb
 		return;
 	}
 
-	FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
-	if ( openInfo.m_pSearchPath )
-	{
-		// RaphaelIT7:
-		// We don't use openInfo.m_AbsolutePath as that was forced to lowercase!
-		// ToDo: Consider if we should always force lower case?
-		const CDiskFileTree *pDiskFileTree = openInfo.m_pSearchPath->GetDiskFileTree();
-		if ( pDiskFileTree )
-			eCacheEntry = pDiskFileTree->ContainsPath( openInfo.m_AbsolutePath );
+	FileCacheEntry eCacheEntry = g_pBaseFileSystem->m_DiskFileTree.ContainsPath( openInfo.m_AbsolutePath );
 
-		// openInfo.m_pFileName is a mess due to \\..\\ not yet being normalized!
-		// eCacheEntry = openInfo.m_pSearchPath->ContainsPath( openInfo.m_pFileName );
-		if ( eCacheEntry != FileCacheEntry::FILE && eCacheEntry != FileCacheEntry::UNKNOWN )
-			return;
-	}
+	// openInfo.m_pFileName is a mess due to \\..\\ not yet being normalized!
+	// eCacheEntry = openInfo.m_pSearchPath->ContainsPath( openInfo.m_pFileName );
+	if ( eCacheEntry != FileCacheEntry::FILE && eCacheEntry != FileCacheEntry::UNKNOWN )
+		return;
 
 	int64 size;
 	FILE *fp = Trace_FOpen( openInfo.m_AbsolutePath, openInfo.m_pOptions, openInfo.m_Flags, &size );
@@ -2227,10 +2218,8 @@ void CBaseFileSystem::HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAb
 			Plat_DebugString( "\n" );
 		}
 
-		/*
-		RaphaelIT7: Debugging
-		
-		if ( eCacheEntry != FileCacheEntry::FILE && eCacheEntry != FileCacheEntry::UNKNOWN )
+		// RaphaelIT7: Debugging
+		/* if ( eCacheEntry != FileCacheEntry::FILE && eCacheEntry != FileCacheEntry::UNKNOWN )
 		{
 			__debugbreak();
 			openInfo.m_pSearchPath->ContainsPath( openInfo.m_pFileName );
@@ -2249,6 +2238,9 @@ void CBaseFileSystem::HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAb
 		// GMod - Returns on hit
 		return;
 	}
+
+	// RaphaelIT7: If this happens then the file was removed from disk and we didn't know yet
+	g_pBaseFileSystem->m_DiskFileTree.RemovePath( openInfo.m_AbsolutePath );
 }
 
 
@@ -2525,6 +2517,8 @@ FileHandle_t CBaseFileSystem::OpenForWrite( const char *pFileName, const char *p
 		return nullptr;
 	}
 
+	g_pBaseFileSystem->m_DiskFileTree.AddPath( pTmpFileName, FileCacheEntry::FILE );
+
 	auto *fh = new CFileHandle( this );
 	fh->m_nLength = size;
 	fh->m_type = FT_NORMAL;
@@ -2776,10 +2770,7 @@ time_t CBaseFileSystem::FastFileTime( const CSearchPath *path, const char *pFile
 		// RaphaelIT7: We force lower for consistency!
 		V_strlower( pTmpFileName );
 		NormalizeGamePath( pTmpFileName );
-		FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
-		const CDiskFileTree *pDiskFileTree = path->GetDiskFileTree();
-		if ( pDiskFileTree )
-			eCacheEntry = pDiskFileTree->ContainsPath( pTmpFileName );
+		FileCacheEntry eCacheEntry = g_pBaseFileSystem->m_DiskFileTree.ContainsPath( pTmpFileName );
 
 		// RaphaelIT7: We check == INVALID since FS_stat works on both file and folder so we must allow both!
 		if ( eCacheEntry == FileCacheEntry::INVALID )
@@ -3818,10 +3809,7 @@ bool CBaseFileSystem::IsDirectory( const char *pFileName, const char *pathID )
 			{
 				// RaphaelIT7: We force lower for consistency!
 				V_strlower( pTmpFileName );
-				FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
-				const CDiskFileTree *pDiskFileTree = pSearchPath->GetDiskFileTree();
-				if ( pDiskFileTree )
-					eCacheEntry = pDiskFileTree->ContainsPath( pTmpFileName );
+				FileCacheEntry eCacheEntry = g_pBaseFileSystem->m_DiskFileTree.ContainsPath( pTmpFileName );
 
 				// RaphaelIT7: We check == INVALID since FS_stat works on both file and folder so we must allow both!
 				if ( eCacheEntry != FileCacheEntry::FOLDER && eCacheEntry != FileCacheEntry::UNKNOWN )
@@ -3841,6 +3829,9 @@ bool CBaseFileSystem::IsDirectory( const char *pFileName, const char *pathID )
 				{
 					if ( buf.st_mode & _S_IFDIR )
 						return true;
+				} else {
+					// RaphaelIT7: As fallback since apparently it's no longer a folder?
+					g_pBaseFileSystem->m_DiskFileTree.RemovePath( pTmpFileName );
 				}
 			}
 		}
@@ -3897,6 +3888,8 @@ void CBaseFileSystem::CreateDirHierarchy( const char *pRelativePathT, const char
 					szScratchFileName,
 					pRelativePathT,
 					std::generic_category().message(errno).c_str() );
+			} else {
+				g_pBaseFileSystem->m_DiskFileTree.AddPath( szScratchFileName, FileCacheEntry::FOLDER );
 			}
 
 			*s = CORRECT_PATH_SEPARATOR;
@@ -3915,6 +3908,8 @@ void CBaseFileSystem::CreateDirHierarchy( const char *pRelativePathT, const char
 			szScratchFileName,
 			pRelativePathT,
 			std::generic_category().message(errno).c_str() );
+	} else {
+		g_pBaseFileSystem->m_DiskFileTree.AddPath( szScratchFileName, FileCacheEntry::FOLDER );
 	}
 }
 
@@ -4420,10 +4415,7 @@ const char *CBaseFileSystem::RelativePathToFullPath( const char *pFileName, cons
 
 		// RaphaelIT7: We force lower for consistency!
 		V_strlower( pTmpFileName );
-		FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
-		const CDiskFileTree *pDiskFileTree = pSearchPath->GetDiskFileTree();
-		if ( pDiskFileTree )
-			eCacheEntry = pDiskFileTree->ContainsPath( pTmpFileName );
+		FileCacheEntry eCacheEntry = g_pBaseFileSystem->m_DiskFileTree.ContainsPath( pTmpFileName );
 
 		// RaphaelIT7: We check == INVALID since FS_stat works on both file and folder so we must allow both!
 		if ( eCacheEntry == FileCacheEntry::INVALID )
@@ -4602,6 +4594,12 @@ bool CBaseFileSystem::RenameFile( char const *pOldPath, char const *pNewPath, co
 		V_strcpy_safe( pNewFileName, pNewPath );
 	}
 
+	// RaphaelIT7: We force lower for consistency!
+	V_strlower( pNewFileName );
+	NormalizeGamePath( pNewFileName );
+	V_strlower( szScratchFileName );
+	NormalizeGamePath( szScratchFileName );
+
 	// Make sure the directory exitsts, too
 	char pPathOnly[ MAX_PATH ];
 	V_strcpy_safe( pPathOnly, pNewFileName );
@@ -4616,6 +4614,8 @@ bool CBaseFileSystem::RenameFile( char const *pOldPath, char const *pNewPath, co
 			pNewFileName,
 			std::generic_category().message(errno).c_str() );
 		return false;
+	} else {
+		g_pBaseFileSystem->m_DiskFileTree.RenamePath( szScratchFileName, pNewFileName );
 	}
 
 	return true;
@@ -4824,18 +4824,11 @@ bool CBaseFileSystem::CSearchPath::IsMapPath() const
 
 CBaseFileSystem::FileCacheEntry CBaseFileSystem::CSearchPath::ContainsPath( const char *pszRelativePath ) const
 {
-	if ( m_pDiskFileTree )
-	{
-		char szFullPath[MAX_PATH];
-		V_ComposeFileName( GetPathString(), pszRelativePath, szFullPath, sizeof( szFullPath ) );
-		V_strlower( szFullPath );
+	char szFullPath[MAX_PATH];
+	V_ComposeFileName( GetPathString(), pszRelativePath, szFullPath, sizeof( szFullPath ) );
+	V_strlower( szFullPath );
 
-		return m_pDiskFileTree->ContainsPath( szFullPath );
-	}
-
-	// No m_pDiskFileTree?
-	Assert( false );
-	return FileCacheEntry::UNKNOWN;
+	return g_pBaseFileSystem->m_DiskFileTree.ContainsPath( szFullPath );
 }
 
 void CBaseFileSystem::CSearchPath::SetupFileList()
@@ -4843,7 +4836,7 @@ void CBaseFileSystem::CSearchPath::SetupFileList()
 	// RaphaelIT7:
 	// We implement search manually as using FindFirst & that stuff is like asking for pain and performance issues
 	if ( V_IsAbsolutePath( GetPathString() ) )
-		m_pDiskFileTree = g_pBaseFileSystem->FindFileTree( GetPathString() );
+		g_pBaseFileSystem->m_DiskFileTree.BuildTree( GetPathString() );
 }
 
 //-----------------------------------------------------------------------------
@@ -6093,12 +6086,22 @@ void CBaseFileSystem::SetupDiskTracking( CSearchPath *pSearchPath )
 	// or port over from REngine though needs to be changed
 }
 
-CBaseFileSystem::CDiskFileTree::CDiskFileTree( const char *pszRoot )
+void CBaseFileSystem::CDiskFileTree::BuildTree( const char *pszRoot )
 {
 	if ( V_IsAbsolutePath( pszRoot ) )
-		RecursiveTraverse( pszRoot );
+	{
+		char szFullPath[MAX_PATH];
+		V_strncpy( szFullPath, pszRoot, sizeof( szFullPath ) );
+		V_FixSlashes( szFullPath, '/' );
+		// RaphaelIT7:
+		// Somehow... we can have some of those.
+		// No we cannot use NormalizeGamePath as the resulting path is wrong... somehow
+		V_RemoveDotSlashes( szFullPath );
+		V_StripTrailingSlash( szFullPath );
+		V_strlower( szFullPath );
 
-	m_strRoot = pszRoot;
+		RecursiveTraverse( pszRoot );
+	}
 }
 
 CBaseFileSystem::FileCacheEntry CBaseFileSystem::CDiskFileTree::ContainsPath( const char *pszAbsolutePath ) const
@@ -6115,11 +6118,40 @@ CBaseFileSystem::FileCacheEntry CBaseFileSystem::CDiskFileTree::ContainsPath( co
 	return CBaseFileSystem::FileCacheEntry::INVALID;
 }
 
+// RaphaelIT7 (ToDo): We need a shared mutex!
+void CBaseFileSystem::CDiskFileTree::AddPath( const char *pszAbsolutePath, FileCacheEntry type )
+{
+	auto it = m_FileList.find( pszAbsolutePath );
+	if ( it == m_FileList.end() )
+		m_FileList[pszAbsolutePath] = type;
+}
+
+void CBaseFileSystem::CDiskFileTree::RemovePath( const char *pszAbsolutePath )
+{
+	auto it = m_FileList.find( pszAbsolutePath );
+	if ( it != m_FileList.end() )
+		m_FileList.erase( it );
+}
+
+void CBaseFileSystem::CDiskFileTree::RenamePath( const char *pszOldAbsolutePath, const char *pszNewAbsolutePath )
+{
+	auto it = m_FileList.find( pszOldAbsolutePath );
+	if ( it == m_FileList.end() )
+		return; // Lies! ToDo: How should we handle this?
+
+	m_FileList[ pszNewAbsolutePath ] = it->second;
+	m_FileList.erase( it );
+}
+
 // RaphaelIT7:
 // This is expensive! A trade of startup time vs runtime performance
 // ToDo: Check out if we can improve memory usage
 void CBaseFileSystem::CDiskFileTree::RecursiveTraverse( const char *pszFolderPath )
 {
+	// If we have a entry then we already are tracking this one
+	if ( m_FileList.find( pszFolderPath ) != m_FileList.end() )
+		return;
+
 	char szSearchPath[MAX_PATH];
 	V_snprintf( szSearchPath, sizeof( szSearchPath ), "%s/*", pszFolderPath );
 
@@ -6144,55 +6176,11 @@ void CBaseFileSystem::CDiskFileTree::RecursiveTraverse( const char *pszFolderPat
 		V_strlower( szFullPath );
 
 		const bool bDirectory = ( findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) != 0;
-		m_FileList.emplace( szFullPath, bDirectory ? FileCacheEntry::FOLDER : FileCacheEntry::FILE );
 		if ( bDirectory )
 			RecursiveTraverse( szFullPath );
 
+		m_FileList.emplace( szFullPath, bDirectory ? FileCacheEntry::FOLDER : FileCacheEntry::FILE );
 	} while ( g_pBaseFileSystem->FS_FindNextFile( hFind, &findData ) );
 
 	g_pBaseFileSystem->FS_FindClose( hFind );
-}
-
-// RaphaelIT7: We try to find a existing tree to reuse or we create a new one
-CBaseFileSystem::CDiskFileTree *CBaseFileSystem::FindFileTree( const char *pszAbsoluteFolder )
-{
-	Assert( pszAbsoluteFolder );
-	Assert( V_IsAbsolutePath( pszAbsoluteFolder ) );
-
-	char szNormalizedPath[MAX_PATH];
-	V_strncpy( szNormalizedPath, pszAbsoluteFolder, sizeof( szNormalizedPath ) );
-	V_FixSlashes( szNormalizedPath, '/' );
-	V_StripTrailingSlash( szNormalizedPath );
-
-	CDiskFileTree *pBestTree = nullptr;
-	size_t nBestLength = 0;
-
-	for ( CDiskFileTree *pTree : m_DiskFileTrees )
-	{
-		const char *pszRoot = pTree->GetRoot();
-		const size_t nRootLength = V_strlen( pszRoot );
-		if ( nRootLength > strlen( szNormalizedPath ) )
-			continue;
-
-		if ( V_strnicmp( szNormalizedPath, pszRoot, nRootLength ) != 0 )
-			continue;
-
-		const bool bExactMatch = ( nRootLength == strlen( szNormalizedPath ) );
-		if ( !bExactMatch && szNormalizedPath[nRootLength] != CORRECT_PATH_SEPARATOR ) // Avoid falsely matching C:/abc and C:/abc2
-			continue;
-
-		if ( nRootLength > nBestLength )
-		{
-			pBestTree = pTree;
-			nBestLength = nRootLength;
-		}
-	}
-
-	if ( pBestTree )
-		return pBestTree;
-
-	CDiskFileTree *pNewTree = new CDiskFileTree( szNormalizedPath );
-	m_DiskFileTrees.push_back( pNewTree );
-
-	return pNewTree;
 }
