@@ -72,6 +72,7 @@
 #include "garrysmod/GamemodeSystem.h"
 #include "garrysmod/AddonFileSystem.h"
 #include <string>
+#include "unordered_stuff.h"
 
 #include "tier0/memdbgon.h"
 
@@ -86,8 +87,11 @@
 
 // GMod
 extern ConVar fs_tellmeyoursecrets;
+extern ConVar fs_usecache;
 // RaphaelIT7: A special flag to mark the workshop/ path
 #define PATH_FLAG_ISWORKSHOP (1<<9)
+// RaphaelIT7: When set then the searchpath will be tracked for disk changes!
+#define PATH_FLAG_TRACKFS (1<<10)
 
 extern CUtlSymbolTableMT g_PathIDTable;
 
@@ -501,6 +505,38 @@ public:
 	// IMPLEMENTATION DETAILS FOR CBaseFileSystem //
 	////////////////////////////////////////////////
 
+	enum class FileCacheEntry : unsigned char
+	{
+		UNKNOWN = -1, // if returned then check disk? (Exists just as a fallback for now)
+		INVALID = 0, // Does not exist
+		FILE,
+		FOLDER,
+	};
+
+	// RaphaelIT7:
+	// For GMod's scale this will be a lot more complex than REngine...
+	// Fun :)
+	class CSearchPath;
+	class CDiskFileTree : public CRefCounted<CRefCountServiceMT>
+	{
+	public:
+		explicit CDiskFileTree( const char *pszRoot );
+		FileCacheEntry ContainsPath( const char *pszAbsolutePath ) const;
+		const char *GetRoot() const { return m_strRoot.c_str(); }
+
+	private:
+		void RecursiveTraverse( const char *pszFolderPath );
+
+		// Absolute path though all entries in m_FileList are also absolute
+		// ToDo:
+		// Consider making m_FileList entires relative to m_strRoot
+		// though would introduce an extra step... memory vs speed. Lets test it later
+		std::string m_strRoot;
+
+		// We use StringHash & StringEq so that when searching we do not allocate an std::string
+		unordered_map<std::string, FileCacheEntry, StringHash, StringEq> m_FileList;
+	};
+
 	class CSearchPath
 	{
 	public:
@@ -527,6 +563,14 @@ public:
 		CPackedStoreRefCount *GetPackedStore() const { return m_pPackedStore; }
 
 		bool IsMapPath() const;
+
+		// RaphaelIT7:
+		// Always use this one for checking!
+		const CDiskFileTree *GetDiskFileTree() const { return m_pDiskFileTree; }
+		FileCacheEntry ContainsPath( const char *pszRelativePath ) const;
+		inline void MarkDiskTracking() { m_bTrackDisk = true; }
+		// Called once all values are set since inside NewSearchPath we got nothing to work with
+		void SetupFileList();
 
 		int					m_storeId;
 
@@ -557,10 +601,18 @@ public:
 		bool				m_bIsWorkshop;
 
 	private:
-		CUtlSymbol			m_Path;
 		const char			*m_pDebugPath;
 		CPackFile			*m_pPackFile;
 		CPackedStoreRefCount *m_pPackedStore;
+		CUtlSymbol			m_Path;
+
+		// RaphaelIT7:
+		// Lets try to apply the same Idea that REngine uses
+
+		// If true then we setup a file watcher to update on disk changes
+		// Else we expect the folder to never change anyways
+		bool				m_bTrackDisk;
+		CDiskFileTree		*m_pDiskFileTree;
 	};
 
 	class CSearchPathsVisits
@@ -920,6 +972,13 @@ public: // GMOD
 	virtual void GMOD_SetupDefaultPaths( const char *pszGamePath, const char *pszModPath );
 	virtual void GMOD_FixPathCase( char *, size_t = 0);
 
+	// RaphaelIT7: Called when a searchpath should watch for any disk changes
+	void SetupDiskTracking( CSearchPath *pSearchPath );
+
+	// It can return a parent tree! It will always return one -> create one if needed
+	// Though CDiskFileTree::ContainsPath accounts for that :)
+	CDiskFileTree *FindFileTree( const char *pszAbsoluteFolder );
+
 private: // GMOD
 	CLanguage m_Language;
 	GameDepot::System m_GameDepotSystem;
@@ -930,6 +989,8 @@ private: // GMOD
 	int m_iRefreshCounter = 0;
 	std::string m_strGamePath = "";
 	std::string m_strModPath = "";
+
+	std::vector<CDiskFileTree*> m_DiskFileTrees;
 };
 
 inline const CUtlSymbol& CBaseFileSystem::CPathIDInfo::GetPathID() const

@@ -54,6 +54,7 @@ ConVar fs_warning_mode( "fs_warning_mode", "0", 0, "0:Off, 1:Warn main thread, 2
 
 // GMod
 ConVar fs_tellmeyoursecrets( "fs_tellmeyoursecrets", "0", 0, "0:Off, 1:On, 2:Extra" );
+ConVar fs_usecache( "fs_usecache", "1", 0, "Enables the filesystem to build filelists to use instead of disk lookups" );
 
 constexpr inline int BSPOUTPUT{0};	// bsp output flag -- determines type of fs_log output to generate
 
@@ -86,6 +87,42 @@ static bool V_CheckDoubleSlashes( const char *pStr )
 #else
 #define CHECK_DOUBLE_SLASHES( x ) 
 #endif
+
+// RaphaelIT7:
+// Try to deal with bs paths like materials\\..\\backgrounds
+// V_RemoveDotSlashes exists BUT it doesn't do both seperators unlike this one
+static void NormalizeGamePath( char *pszPath )
+{
+    char* src = pszPath;
+    char* dst = pszPath;
+    while ( *src )
+    {
+        if ( src[0] == '.' && ( src[1] == '\\' || src[1] == '/' ) )
+        {
+            src += 2;
+            continue;
+        }
+
+        if ( src[0] == '.' && src[1] == '.' && ( src[2] == '\\' || src[2] == '/' ) )
+        {
+            // Remove previous component.
+            if ( dst > pszPath )
+            {
+                --dst;
+
+                while ( dst > pszPath && dst[-1] != '\\' && dst[-1] != '/' )
+                    --dst;
+            }
+
+            src += 3;
+            continue;
+        }
+
+        *dst++ = *src++;
+    }
+
+    *dst = '\0';
+}
 
 static void LogFileOpen( const char *vpk, const char *pFilename, const char *pAbsPath )
 {
@@ -883,6 +920,10 @@ bool CBaseFileSystem::AddPackFileFromPath( const char *pPath, const char *pakfil
 
 void CBaseFileSystem::AddPackFiles( const char *pPath, const CUtlSymbol &pathID, SearchPathAdd_t addType )
 {
+	// RaphaelIT7:
+	// iirc GMod never would add a .zip?
+	// GMod never accounted for this as no NewSearchPath call is setup here either...
+	Assert( false );
 	Assert( ThreadInMainThread() );
 	DISK_INTENSIVE();
 
@@ -1428,6 +1469,7 @@ void CBaseFileSystem::AddSearchPathInternal( const char *pPath, const char *path
 
 	// all matching paths have a reference to the same store
 	sp->m_storeId = id;
+	sp->SetupFileList();
 }
 
 //-----------------------------------------------------------------------------
@@ -2141,6 +2183,22 @@ void CBaseFileSystem::HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAb
 		return;
 	}
 
+	FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
+	if ( openInfo.m_pSearchPath )
+	{
+		// RaphaelIT7:
+		// We don't use openInfo.m_AbsolutePath as that was forced to lowercase!
+		// ToDo: Consider if we should always force lower case?
+		const CDiskFileTree *pDiskFileTree = openInfo.m_pSearchPath->GetDiskFileTree();
+		if ( pDiskFileTree )
+			eCacheEntry = pDiskFileTree->ContainsPath( openInfo.m_AbsolutePath );
+
+		// openInfo.m_pFileName is a mess due to \\..\\ not yet being normalized!
+		// eCacheEntry = openInfo.m_pSearchPath->ContainsPath( openInfo.m_pFileName );
+		if ( eCacheEntry != FileCacheEntry::FILE && eCacheEntry != FileCacheEntry::UNKNOWN )
+			return;
+	}
+
 	int64 size;
 	FILE *fp = Trace_FOpen( openInfo.m_AbsolutePath, openInfo.m_pOptions, openInfo.m_Flags, &size );
 	if ( fp )
@@ -2157,6 +2215,16 @@ void CBaseFileSystem::HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAb
 			Plat_DebugString( openInfo.m_AbsolutePath );
 			Plat_DebugString( "\n" );
 		}
+
+		/*
+		RaphaelIT7: Debugging
+		
+		if ( eCacheEntry != FileCacheEntry::FILE && eCacheEntry != FileCacheEntry::UNKNOWN )
+		{
+			__debugbreak();
+			openInfo.m_pSearchPath->ContainsPath( openInfo.m_pFileName );
+			__debugbreak();
+		}*/
 
 		openInfo.m_pFileHandle = new CFileHandle(this);
 		openInfo.m_pFileHandle->m_pFile = fp;
@@ -2234,6 +2302,9 @@ FileHandle_t CBaseFileSystem::FindFileInSearchPath( CFileOpenInfo &openInfo )
 	V_strlower( szLowercaseFilename );
 
 	openInfo.SetAbsolutePath( "%s%s", openInfo.m_pSearchPath->GetPathString(), szLowercaseFilename );
+	// RaphaelIT7: BUG! Source apparently allows materials\\..\\backgrounds why?
+	NormalizeGamePath( szLowercaseFilename );
+
 
 	// now have an absolute name
 	HandleOpenRegularFile( openInfo, false );
@@ -2690,6 +2761,24 @@ time_t CBaseFileSystem::FastFileTime( const CSearchPath *path, const char *pFile
 		}
 
 		V_FixSlashes( pTmpFileName );
+
+		// RaphaelIT7: We force lower for consistency!
+		V_strlower( pTmpFileName );
+		NormalizeGamePath( pTmpFileName );
+		FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
+		const CDiskFileTree *pDiskFileTree = path->GetDiskFileTree();
+		if ( pDiskFileTree )
+			eCacheEntry = pDiskFileTree->ContainsPath( pTmpFileName );
+
+		// RaphaelIT7: We check == INVALID since FS_stat works on both file and folder so we must allow both!
+		if ( eCacheEntry == FileCacheEntry::INVALID )
+		{
+			// RaphaelIT7: Debugging
+			//if ( FS_stat( pTmpFileName, &buf ) != -1 )
+			//	__debugbreak();
+
+			return 0L;
+		}
 
 		if ( FS_stat( pTmpFileName, &buf ) != -1 )
 		{
@@ -3676,6 +3765,9 @@ bool CBaseFileSystem::IsDirectory( const char *pFileName, const char *pathID )
 	V_StripTrailingSlash( pTempBuf );
 	pFileName = pTempBuf;
 
+	// RaphaelIT7: Just to avoid weird issues
+	NormalizeGamePath( pTempBuf );
+
 	char tempPathID[MAX_PATH];
 	ParsePathID( pFileName, pathID, tempPathID );
 	if ( V_IsAbsolutePath( pFileName ) )
@@ -3713,6 +3805,27 @@ bool CBaseFileSystem::IsDirectory( const char *pFileName, const char *pathID )
 			}
 			else
 			{
+				// RaphaelIT7: We force lower for consistency!
+				V_strlower( pTmpFileName );
+				FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
+				const CDiskFileTree *pDiskFileTree = pSearchPath->GetDiskFileTree();
+				if ( pDiskFileTree )
+					eCacheEntry = pDiskFileTree->ContainsPath( pTmpFileName );
+
+				// RaphaelIT7: We check == INVALID since FS_stat works on both file and folder so we must allow both!
+				if ( eCacheEntry != FileCacheEntry::FOLDER && eCacheEntry != FileCacheEntry::UNKNOWN )
+				{
+					// RaphaelIT7: Debugging
+					//if ( FS_stat( pTmpFileName, &buf ) != -1 )
+					//	__debugbreak();
+
+					continue;
+				}
+
+				// RaphaelIT7:
+				// We can just return true since it's said to be a folder?
+				// Verify: Lets be certain first before we truly just skip the disk check!
+				// return true;
 				if ( FS_stat( pTmpFileName, &buf ) != -1 )
 				{
 					if ( buf.st_mode & _S_IFDIR )
@@ -4187,6 +4300,9 @@ const char *CBaseFileSystem::RelativePathToFullPath( const char *pFileName, cons
 	FixUpPath( pFileName, szLowercaseFilename );
 	pFileName = szLowercaseFilename;
 
+	// RaphaelIT7: Just to avoid weird issues
+	NormalizeGamePath( szLowercaseFilename );
+
 	// Fill in the default in case it's not found...
 	V_strncpy( pDest, pFileName, maxLenInChars );
 
@@ -4286,6 +4402,28 @@ const char *CBaseFileSystem::RelativePathToFullPath( const char *pFileName, cons
 		char pTmpFileName[ MAX_FILEPATH ];
 		V_sprintf_safe( pTmpFileName, "%s%s", pSearchPath->GetPathString(), pFileName );
 		V_FixSlashes( pTmpFileName );
+
+		// RaphaelIT7 (ToDo): Move this onto main branch! I forgot it there (Same for FastFileTime)
+		// if ( pSearchPath->m_bIsWorkshop )
+		// Lookup in Addon::FileSystem
+
+		// RaphaelIT7: We force lower for consistency!
+		V_strlower( pTmpFileName );
+		FileCacheEntry eCacheEntry = FileCacheEntry::UNKNOWN;
+		const CDiskFileTree *pDiskFileTree = pSearchPath->GetDiskFileTree();
+		if ( pDiskFileTree )
+			eCacheEntry = pDiskFileTree->ContainsPath( pTmpFileName );
+
+		// RaphaelIT7: We check == INVALID since FS_stat works on both file and folder so we must allow both!
+		if ( eCacheEntry == FileCacheEntry::INVALID )
+		{
+			// RaphaelIT7: Debugging
+			//if ( FS_stat( pTmpFileName, &buf ) != -1 )
+			//	__debugbreak();
+
+			continue;
+		}
+
 		if ( FS_stat( pTmpFileName, &buf ) != -1 )
 		{
 			V_strncpy( pDest, pTmpFileName, maxLenInChars );
@@ -4650,6 +4788,7 @@ CBaseFileSystem::CSearchPath::CSearchPath( void )
 	m_pPackedStore = nullptr;
 	m_bIsTrustedForPureServer = false;
 	m_bIsWorkshop = false;
+	m_bTrackDisk = false;
 }
 
 const char *CBaseFileSystem::CSearchPath::GetDebugString() const
@@ -4670,6 +4809,30 @@ const char *CBaseFileSystem::CSearchPath::GetDebugString() const
 bool CBaseFileSystem::CSearchPath::IsMapPath() const
 {
 	return GetPackFile()->m_bIsMapPath;
+}
+
+CBaseFileSystem::FileCacheEntry CBaseFileSystem::CSearchPath::ContainsPath( const char *pszRelativePath ) const
+{
+	if ( m_pDiskFileTree )
+	{
+		char szFullPath[MAX_PATH];
+		V_ComposeFileName( GetPathString(), pszRelativePath, szFullPath, sizeof( szFullPath ) );
+		V_strlower( szFullPath );
+
+		return m_pDiskFileTree->ContainsPath( szFullPath );
+	}
+
+	// No m_pDiskFileTree?
+	Assert( false );
+	return FileCacheEntry::UNKNOWN;
+}
+
+void CBaseFileSystem::CSearchPath::SetupFileList()
+{
+	// RaphaelIT7:
+	// We implement search manually as using FindFirst & that stuff is like asking for pain and performance issues
+	if ( V_IsAbsolutePath( GetPathString() ) )
+		m_pDiskFileTree = g_pBaseFileSystem->FindFileTree( GetPathString() );
 }
 
 //-----------------------------------------------------------------------------
@@ -5582,6 +5745,7 @@ CBaseFileSystem::CSearchPath* CBaseFileSystem::NewSearchPath( SearchPathAdd_t ad
 
 	const bool bVPKHack = (addType >> 8) & 1;
 	const bool bIsWorkshop = (addType & PATH_FLAG_ISWORKSHOP) != 0;
+	const bool bTrackDisk = (addType & PATH_FLAG_TRACKFS) != 0;
 	CPathPriorityGroup_t priorityGroup = static_cast<CPathPriorityGroup_t>( ( addType & PATH_PRIORITY_MASK ) >> 1 );
 	if ( priorityGroup == GN_UNSET )
 		priorityGroup = GN_ENGINECORE;
@@ -5612,6 +5776,14 @@ CBaseFileSystem::CSearchPath* CBaseFileSystem::NewSearchPath( SearchPathAdd_t ad
 
 	if ( !result )
 		result = &m_SearchPaths[ m_SearchPaths.AddToTail() ];
+
+	// RaphaelIT7:
+	// We can later add PATH_FLAG_TRACKFS though this will do for now
+	// (No one should modify anything else in garrysmod/ anyways?)
+	// DATA is marked manually since it's mixed in GMODCORE
+	// & we also track DOWNLOADS since someone may after a failed download manually remove a file!
+	if ( bTrackDisk || priorityGroup == GN_LUA || priorityGroup == GN_DOWNLOADS || priorityGroup == GN_ADDONCONTENT || priorityGroup == GN_BADDONCONTENT )
+		SetupDiskTracking( result );
 
 	result->m_PriorityGroupID = priorityGroup;
 	result->m_bVPKHack = bVPKHack;
@@ -5853,7 +6025,7 @@ void CBaseFileSystem::GMOD_SetupDefaultPaths( const char *pszGamePath, const cha
 	AddSearchPath( pszModPath, "GAME", PRIORITY_GROUP_TAIL( GN_GMODCORE ) );
 	AddSearchPath( pszModPath, "GAME_WRITE", PRIORITY_GROUP_TAIL( GN_GMODCORE ) );
 	AddSearchPath( pszModPath, "garrysmod", PRIORITY_GROUP_TAIL( GN_GMODCORE ) );
-	AddSearchPath( ( m_strModPath + "/data" ).c_str(), "DATA", PRIORITY_GROUP_TAIL( GN_GMODCORE ) );
+	AddSearchPath( ( m_strModPath + "/data" ).c_str(), "DATA", PRIORITY_GROUP_TAIL( GN_GMODCORE ) | PATH_FLAG_TRACKFS );
 
 	MarkPathIDByRequestOnly( "workshop", true );
 	MarkPathIDByRequestOnly( "thirdparty", true );
@@ -5926,4 +6098,116 @@ void CBaseFileSystem::GMOD_FixPathCase( char *pszPath, size_t nPathLength )
 #else
 	// RaphaelIT7 (ToDo): This one must be done- though I got no idea as I can't find it in IDA
 #endif
+}
+
+void CBaseFileSystem::SetupDiskTracking( CSearchPath *pSearchPath )
+{
+	pSearchPath->MarkDiskTracking();
+
+	// ToDo: Create file watcher
+	// or port over from REngine though needs to be changed
+}
+
+CBaseFileSystem::CDiskFileTree::CDiskFileTree( const char *pszRoot )
+{
+	if ( V_IsAbsolutePath( pszRoot ) )
+		RecursiveTraverse( pszRoot );
+
+	m_strRoot = pszRoot;
+}
+
+CBaseFileSystem::FileCacheEntry CBaseFileSystem::CDiskFileTree::ContainsPath( const char *pszAbsolutePath ) const
+{
+	if ( !fs_usecache.GetBool() )
+		return CBaseFileSystem::FileCacheEntry::UNKNOWN;
+
+	auto it = m_FileList.find( pszAbsolutePath );
+	if ( it != m_FileList.end() )
+		return it->second;
+
+	// RaphaelIT7: BUG! If we print anything we crash due to a stackoverflow in tier0? Something with output!
+	//Msg( "Failed to find %s\n", pszAbsolutePath );
+	return CBaseFileSystem::FileCacheEntry::INVALID;
+}
+
+// RaphaelIT7:
+// This is expensive! A trade of startup time vs runtime performance
+// ToDo: Check out if we can improve memory usage
+void CBaseFileSystem::CDiskFileTree::RecursiveTraverse( const char *pszFolderPath )
+{
+	char szSearchPath[MAX_PATH];
+	V_snprintf( szSearchPath, sizeof( szSearchPath ), "%s/*", pszFolderPath );
+
+	WIN32_FIND_DATA findData;
+	HANDLE hFind = g_pBaseFileSystem->FS_FindFirstFile( szSearchPath, &findData );
+	if ( hFind == INVALID_HANDLE_VALUE )
+		return;
+
+	do
+	{
+		if ( !V_stricmp( findData.cFileName, "." ) || !V_stricmp( findData.cFileName, ".." ) )
+			continue;
+
+		char szFullPath[MAX_PATH];
+		V_snprintf( szFullPath, sizeof( szFullPath ), "%s" CORRECT_PATH_SEPARATOR_S "%s", pszFolderPath, findData.cFileName );
+		V_FixSlashes( szFullPath, '/' );
+		// RaphaelIT7:
+		// Somehow... we can have some of those.
+		// No we cannot use NormalizeGamePath as the resulting path is wrong... somehow
+		V_RemoveDotSlashes( szFullPath );
+		V_StripTrailingSlash( szFullPath );
+		V_strlower( szFullPath );
+
+		const bool bDirectory = ( findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) != 0;
+		m_FileList.emplace( szFullPath, bDirectory ? FileCacheEntry::FOLDER : FileCacheEntry::FILE );
+		if ( bDirectory )
+			RecursiveTraverse( szFullPath );
+
+	} while ( g_pBaseFileSystem->FS_FindNextFile( hFind, &findData ) );
+
+	g_pBaseFileSystem->FS_FindClose( hFind );
+}
+
+// RaphaelIT7: We try to find a existing tree to reuse or we create a new one
+CBaseFileSystem::CDiskFileTree *CBaseFileSystem::FindFileTree( const char *pszAbsoluteFolder )
+{
+	Assert( pszAbsoluteFolder );
+	Assert( V_IsAbsolutePath( pszAbsoluteFolder ) );
+
+	char szNormalizedPath[MAX_PATH];
+	V_strncpy( szNormalizedPath, pszAbsoluteFolder, sizeof( szNormalizedPath ) );
+	V_FixSlashes( szNormalizedPath, '/' );
+	V_StripTrailingSlash( szNormalizedPath );
+
+	CDiskFileTree *pBestTree = nullptr;
+	size_t nBestLength = 0;
+
+	for ( CDiskFileTree *pTree : m_DiskFileTrees )
+	{
+		const char *pszRoot = pTree->GetRoot();
+		const size_t nRootLength = V_strlen( pszRoot );
+		if ( nRootLength > strlen( szNormalizedPath ) )
+			continue;
+
+		if ( V_strnicmp( szNormalizedPath, pszRoot, nRootLength ) != 0 )
+			continue;
+
+		const bool bExactMatch = ( nRootLength == strlen( szNormalizedPath ) );
+		if ( !bExactMatch && szNormalizedPath[nRootLength] != CORRECT_PATH_SEPARATOR ) // Avoid falsely matching C:/abc and C:/abc2
+			continue;
+
+		if ( nRootLength > nBestLength )
+		{
+			pBestTree = pTree;
+			nBestLength = nRootLength;
+		}
+	}
+
+	if ( pBestTree )
+		return pBestTree;
+
+	CDiskFileTree *pNewTree = new CDiskFileTree( szNormalizedPath );
+	m_DiskFileTrees.push_back( pNewTree );
+
+	return pNewTree;
 }
