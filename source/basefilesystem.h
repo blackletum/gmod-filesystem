@@ -507,7 +507,7 @@ public:
 
 	enum class FileCacheEntry : unsigned char
 	{
-		UNKNOWN = -1, // if returned then check disk? (Exists just as a fallback for now)
+		UNKNOWN = 255, // if returned then check disk? (Exists just as a fallback for now)
 		INVALID = 0, // Does not exist
 		FILE,
 		FOLDER,
