@@ -1946,7 +1946,7 @@ bool CPackedStore::DirectoryEntryExists( const char *pszPath )
 	return false;
 }
 
-intp CPackedStore::GetFileAndDirLists( const char *pWildCard, CUtlStringList &outDirnames, CUtlStringList &outFilenames, bool bSortedOutput )
+intp CPackedStore::GetFileAndDirLists( const char *pWildCard, CUtlStringList &outDirnames, CUtlStringList &outFilenames, bool bSortedOutput, bool bFullPaths )
 {
 	// If this is the first time we've called FindFirst on this CPackedStore then let's build the caches
 	if ( !m_directoryList.Count() )
@@ -2131,17 +2131,27 @@ intp CPackedStore::GetFileAndDirLists( const char *pWildCard, CUtlStringList &ou
 		// Add all the files as well
 		FOR_EACH_VEC( m_directoryList, i )
 		{
+			const char *pszDir = m_directoryList[i];
 			// char *dirName = V_strdup( m_directoryList[i] );
 			// V_FixSlashes( dirName );
 			// Add all directories
-			outDirnames.CopyAndAddToTail( m_directoryList[i] );
+			outDirnames.CopyAndAddToTail( pszDir );
 			// outDirnames.AddToTail( dirName );
 
 			// Now add all files
 			CUtlStringList &filesInDirectory = *(m_dirContents.Element( i ));
 			FOR_EACH_VEC( filesInDirectory, j )
 			{
-				outFilenames.CopyAndAddToTail( filesInDirectory[j] );
+				if ( bFullPaths && *pszDir )
+				{
+					char szFullPath[MAX_PATH];
+					V_ComposeFileName( pszDir, filesInDirectory[j], szFullPath, sizeof(szFullPath) );
+					outFilenames.CopyAndAddToTail( szFullPath );
+				}
+				else
+				{
+					outFilenames.CopyAndAddToTail( filesInDirectory[j] );
+				}
 			}
 		}
 	}

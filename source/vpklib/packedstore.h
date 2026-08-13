@@ -327,7 +327,7 @@ public:
 	void GetFileList( const char *pWildcard, CUtlVector<VPKContentFileInfo_t> &outVecResults );
 
 	// Get a list of all directories of the given wildcard
-	intp GetFileAndDirLists( const char *pWildCard, CUtlStringList &outDirnames, CUtlStringList &outFilenames, bool bSortedOutput );
+	intp GetFileAndDirLists( const char *pWildCard, CUtlStringList &outDirnames, CUtlStringList &outFilenames, bool bSortedOutput, bool bFullPaths = false );
 	intp GetFileAndDirLists( CUtlStringList &outDirnames, CUtlStringList &outFilenames, bool bSortedOutput );
 
 	bool IsEmpty( void ) const;
