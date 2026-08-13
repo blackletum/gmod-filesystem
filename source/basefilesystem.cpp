@@ -4866,10 +4866,9 @@ CBaseFileSystem::CSearchPath::~CSearchPath()
 //-----------------------------------------------------------------------------
 CBaseFileSystem::CSearchPath *CBaseFileSystem::CSearchPathsIterator::GetFirst()
 {
-	if ( m_SearchPaths.Count() )
+	if ( g_pBaseFileSystem->m_SearchPaths.Count() )
 	{
-		m_visits.Reset();
-		m_iCurrent = m_SearchPaths.InvalidIndex();
+		m_iCurrent = g_pBaseFileSystem->m_SearchPaths.InvalidIndex();
 		return GetNext();
 	}
 	return &m_EmptySearchPath;
@@ -4881,12 +4880,12 @@ CBaseFileSystem::CSearchPath *CBaseFileSystem::CSearchPathsIterator::GetFirst()
 //-----------------------------------------------------------------------------
 CBaseFileSystem::CSearchPath *CBaseFileSystem::CSearchPathsIterator::GetNext()
 {
-	CSearchPath *pSearchPath = nullptr;
+	CUtlLinkedList<CSearchPath> &searchPaths = g_pBaseFileSystem->m_SearchPaths;
 
-	m_iCurrent = ( m_iCurrent == m_SearchPaths.InvalidIndex() ) ? m_SearchPaths.Head() : m_SearchPaths.Next( m_iCurrent );
-	for ( ; m_iCurrent != m_SearchPaths.InvalidIndex(); m_iCurrent = m_SearchPaths.Next( m_iCurrent ) )
+	m_iCurrent = ( m_iCurrent == searchPaths.InvalidIndex() ) ? searchPaths.Head() : searchPaths.Next( m_iCurrent );
+	for ( ; m_iCurrent != searchPaths.InvalidIndex(); m_iCurrent = searchPaths.Next( m_iCurrent ) )
 	{
-		pSearchPath = &m_SearchPaths[m_iCurrent];
+		CSearchPath *pSearchPath = &searchPaths[m_iCurrent];
 
 		if ( m_PathTypeFilter == FILTER_CULLPACK && pSearchPath->GetPackFile() )
 			continue;
@@ -4897,35 +4896,10 @@ CBaseFileSystem::CSearchPath *CBaseFileSystem::CSearchPathsIterator::GetNext()
 		if ( CBaseFileSystem::FilterByPathID( pSearchPath, m_pathID ) )
 			continue;
 
-		if ( !m_visits.MarkVisit( *pSearchPath ) )
-			break;
-	}
-
-	if ( m_iCurrent != m_SearchPaths.InvalidIndex() )
-	{
 		return pSearchPath;
 	}
 
 	return nullptr;
-}
-
-void CBaseFileSystem::CSearchPathsIterator::CopySearchPaths( const CUtlLinkedList<CSearchPath>	&searchPaths )
-{
-	m_SearchPaths.RemoveAll();
-	for ( auto i = searchPaths.Head(); i != searchPaths.InvalidIndex(); i = searchPaths.Next( i ) )
-		m_SearchPaths.AddToTail( searchPaths[i] );
-
-	for ( auto &sp : m_SearchPaths )
-	{
-		if ( sp.GetPackFile() )
-		{
-			sp.GetPackFile()->AddRef();
-		}
-		else if ( sp.GetPackedStore() )
-		{
-			sp.GetPackedStore()->AddRef();
-		}
-	}
 }
 
 //-----------------------------------------------------------------------------

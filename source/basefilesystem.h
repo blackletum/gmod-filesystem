@@ -638,6 +638,12 @@ public:
 		CUtlVector<int> m_Visits;	// This is a copy of IDs for the search paths we've visited, so 
 	};
 
+	// RaphaelIT7:
+	// We dropped m_SearchPaths, m_visits and CopySearchPaths()
+	// Since it's a waste to copy and allocate those!
+	// When opening a file / working with the iterator, nothing should be modifying m_SearchPaths anyways!
+	// And we never visit a duplicate anyways, so we can safely get rid of m_visits
+	// Optional: We could make it hold a readonly lock of m_SearchPathsMutex (after making m_SearchPathsMutex a CThreadRWLock/CThreadSpinRWLock)
 	class CSearchPathsIterator
 	{
 	public:
@@ -664,12 +670,6 @@ public:
 
 			if ( *ppszFilename && !Q_IsAbsolutePath( *ppszFilename ) )
 			{
-				{
-					// Copy paths to minimize mutex lock time
-					AUTO_LOCK( pFileSystem->m_SearchPathsMutex );
-					CopySearchPaths( pFileSystem->m_SearchPaths );
-				}
-
 				pFileSystem->FixUpPath ( *ppszFilename, m_Filename );
 			}
 			else
@@ -696,12 +696,6 @@ public:
 				m_pathID =  UTL_INVAL_SYMBOL;
 			}
 
-			{
-				// Copy paths to minimize mutex lock time
-				AUTO_LOCK( pFileSystem->m_SearchPathsMutex );
-				CopySearchPaths( pFileSystem->m_SearchPaths );
-			}
-
 			m_Filename[0] = '\0';
 		}
 
@@ -711,12 +705,9 @@ public:
 	private:
 		CSearchPathsIterator( const  CSearchPathsIterator & );
 		void operator=(const CSearchPathsIterator &);
-		void CopySearchPaths( const CUtlLinkedList<CSearchPath>	&searchPaths );
 
 		CUtlLinkedList<CSearchPath>::IndexLocalType_t	m_iCurrent;
 		CUtlSymbol					m_pathID;
-		CUtlLinkedList<CSearchPath> 	m_SearchPaths;
-		CSearchPathsVisits			m_visits;
 		CSearchPath					m_EmptySearchPath;
 		CPathIDInfo					m_EmptyPathIDInfo;
 		PathTypeFilter_t			m_PathTypeFilter;
