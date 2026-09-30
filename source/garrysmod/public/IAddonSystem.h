@@ -38,7 +38,8 @@ public:
 		std::string file;
 		std::string tags;
 		std::string failure; // only set when the addon failed to mount?
-		uint64_t time_updated;
+		uint32_t time_updated;
+		uint32_t model_count;
 		uint64_t wsid;
 		uint64_t creator;
 		uint64_t hcontent_file;

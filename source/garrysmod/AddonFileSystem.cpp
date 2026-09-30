@@ -467,6 +467,9 @@ bool Addon::FileSystem::MountAddon( IAddonSystem::Information &info )
 		fileInfo.m_hFileHandle = hFileHandle;
 		fileInfo.m_nWsid = info.wsid;
 
+		if ( Bootil::String::Test::EndsWith( strFileName, ".mdl" ) )
+			++info.model_count;
+
 		auto existing = pFolder->find( strFileName );
 		if ( existing != pFolder->end() )
 		{
