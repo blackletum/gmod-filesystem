@@ -44,7 +44,7 @@ CPackFile::~CPackFile()
 
 	if ( m_hPackFileHandleFS )
 	{
-		m_fs->FS_fclose( m_hPackFileHandleFS );
+		m_fs->Close( m_hPackFileHandleFS );
 		m_hPackFileHandleFS = NULL;
 	}
 
@@ -55,7 +55,10 @@ int CPackFile::GetSectorSize()
 {
 	if ( m_hPackFileHandleFS )
 	{
-		return m_fs->FS_GetSectorSize( m_hPackFileHandleFS );
+		// RaphaelIT7: Since m_hPackFileHandleFS is no longer a FILE* we just return 1 here
+		// This just exactly what FS_GetSectorSize does...
+		// Not using ((CFileInfo*)m_hPackFileHandleFS)->GetSectorSize() since it would end up recursive
+		return 1;
 	}
 #if defined( SUPPORT_PACKED_STORE )
 	else if ( m_hPackFileHandleVPK )
@@ -134,7 +137,7 @@ CFileHandle *CZipPackFile::OpenFile( const char *pFileName, const char *pOptions
 #endif
 			{
 				// Try to open it as a regular file first
-				m_hPackFileHandleFS = m_fs->Trace_FOpen( m_ZipName, "rb", 0, NULL );
+				m_hPackFileHandleFS = m_fs->HandleOpenAbsoluteFile( m_ZipName );
 
 				// !NOTE! Pack files inside of VPK not supported
 			}
@@ -279,8 +282,8 @@ int CZipPackFile::ReadFromPack( int nEntryIndex, void* pBuffer, int nDestBytes, 
 	// Seek to the start of the read area and perform the read: TODO: CHANGE THIS INTO A CFileHandle
 	if ( m_hPackFileHandleFS )
 	{
-		m_fs->FS_fseek( m_hPackFileHandleFS, m_nBaseOffset + nOffset, SEEK_SET );
-		nBytesRead = m_fs->FS_fread( pBuffer, nDestBytes, nBytes, m_hPackFileHandleFS );
+		m_fs->Seek( m_hPackFileHandleFS, m_nBaseOffset + nOffset, FILESYSTEM_SEEK_HEAD );
+		nBytesRead = m_fs->Read( pBuffer, nBytes, m_hPackFileHandleFS );
 	}
 #if defined( SUPPORT_PACKED_STORE )
 	else
@@ -771,7 +774,7 @@ CZipPackFileHandle::~CZipPackFileHandle()
 	{
 		if ( m_pOwner->m_hPackFileHandleFS )
 		{
-			m_pOwner->FileSystem()->Trace_FClose( m_pOwner->m_hPackFileHandleFS );
+			m_pOwner->FileSystem()->Close( m_pOwner->m_hPackFileHandleFS );
 			m_pOwner->m_hPackFileHandleFS = NULL;
 		}
 	}
@@ -782,7 +785,7 @@ void CZipPackFileHandle::SetBufferSize( int nBytes )
 {
 	if ( m_pOwner->m_hPackFileHandleFS )
 	{
-		m_pOwner->FileSystem()->FS_setbufsize( m_pOwner->m_hPackFileHandleFS, nBytes );
+		m_pOwner->FileSystem()->SetBufferSize( m_pOwner->m_hPackFileHandleFS, nBytes );
 	}
 }
 

@@ -166,7 +166,7 @@ public:
 	int					m_refCount;
 	int					m_nOpenFiles;
 
-	FILE				*m_hPackFileHandleFS;
+	FileHandle_t		m_hPackFileHandleFS;
 #if defined( SUPPORT_PACKED_STORE )
 	CPackedStoreFileHandle m_hPackFileHandleVPK;
 #endif

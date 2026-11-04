@@ -837,7 +837,7 @@ bool CBaseFileSystem::AddPackFileFromPath( const char *pPath, const char *pakfil
 		return false;
 
 	CPackFile *pf = new CZipPackFile( this );
-	pf->m_hPackFileHandleFS = Trace_FOpen( fullpath, "rb", 0, nullptr );
+	pf->m_hPackFileHandleFS = HandleOpenAbsoluteFile( fullpath );
 	if ( !pf->m_hPackFileHandleFS )
 	{
 		delete pf;
@@ -848,13 +848,15 @@ bool CBaseFileSystem::AddPackFileFromPath( const char *pPath, const char *pakfil
 
 	// Get the length of the pack file:
 	// dimhotepus: FS_fseek now returns offset.
-	int64 len = FS_fseek( pf->m_hPackFileHandleFS, 0, FILESYSTEM_SEEK_TAIL );
-	FS_fseek( pf->m_hPackFileHandleFS, 0, FILESYSTEM_SEEK_HEAD );
+	Seek( pf->m_hPackFileHandleFS, 0, FILESYSTEM_SEEK_TAIL );
+	// RaphaelIT7: Switch from FS_ftell to Tell means on Linux 64x > 4GB files now won't work (Would need GMod to change return values consistently in a lot of places)
+	int64 len = Tell( pf->m_hPackFileHandleFS );
+	Seek( pf->m_hPackFileHandleFS, 0, FILESYSTEM_SEEK_HEAD );
 
 	if ( !pf->Prepare( len ) )
 	{
 		// Failed for some reason, ignore it
-		Trace_FClose( pf->m_hPackFileHandleFS );
+		Close( pf->m_hPackFileHandleFS );
 		pf->m_hPackFileHandleFS = nullptr;
 		delete pf;
 
@@ -963,22 +965,22 @@ void CBaseFileSystem::AddPackFiles( const char *pPath, const CUtlSymbol &pathID,
 			sp->SetPackFile( pf );
 			pf->m_lPackFileTime = GetFileTime( fullpath );
 
-			pf->m_hPackFileHandleFS = Trace_FOpen( fullpath, "rb", 0, nullptr );
+			pf->m_hPackFileHandleFS = HandleOpenAbsoluteFile( fullpath );
 
 			if ( pf->m_hPackFileHandleFS )
 			{
-				FS_setbufsize( pf->m_hPackFileHandleFS, 32*1024 );	// 32k buffer.
+				SetBufferSize( pf->m_hPackFileHandleFS, 32*1024 );	// 32k buffer.
 
 				if ( pf->Prepare( pakSizes[i] ) )
 				{
-					FS_setbufsize( pf->m_hPackFileHandleFS, filesystem_buffer_size.GetInt() );
+					SetBufferSize( pf->m_hPackFileHandleFS, filesystem_buffer_size.GetInt() );
 				}
 				else
 				{
 					// Failed for some reason, ignore it
 					if ( pf->m_hPackFileHandleFS )
 					{
-						Trace_FClose( pf->m_hPackFileHandleFS );
+						Close( pf->m_hPackFileHandleFS );
 						pf->m_hPackFileHandleFS = nullptr;
 					}
 					m_SearchPaths.Remove( nIndex );
@@ -1100,6 +1102,10 @@ void CBaseFileSystem::AddMapPackFile( const char *pPath, const char *pPathID, Se
 	}
 
 	{
+		FileHandle_t fp = HandleOpenAbsoluteFile( fullpath );
+		if ( !fp )
+			return;
+#if 0
 		FILE *fp = Trace_FOpen( fullpath, "rb", 0, nullptr );
 		if ( !fp )
 		{
@@ -1126,6 +1132,7 @@ void CBaseFileSystem::AddMapPackFile( const char *pPath, const char *pPathID, Se
 
 			return;
 		}
+#endif
 
 		// RaphaelIT7:
 		// GMod has code here for "Applying lump data fix for L4D2 maps...\n"
@@ -1134,12 +1141,12 @@ void CBaseFileSystem::AddMapPackFile( const char *pPath, const char *pPathID, Se
 		// Get the .bsp file header
 		dheader_t header;
 		BitwiseClear( header );
-		m_Stats.nBytesRead += FS_fread( &header, sizeof( header ), fp );
+		m_Stats.nBytesRead += Read( &header, sizeof( header ), fp );
 		++m_Stats.nReads;
 	
 		if ( header.ident != IDBSPHEADER || header.version < MINBSPVERSION || header.version > BSPVERSION )
 		{
-			Trace_FClose( fp );
+			Close( fp );
 			return;
 		}
 	
@@ -1148,12 +1155,12 @@ void CBaseFileSystem::AddMapPackFile( const char *pPath, const char *pPathID, Se
 		if ( packfile->filelen <= static_cast<int>(sizeof( lump_t )) )
 		{
 			// It's empty or only contains a file header ( so there are no entries ), so don't add to search paths
-			Trace_FClose( fp );
+			Close( fp );
 			return;
 		}
 	
 		// Seek to correct position
-		FS_fseek( fp, packfile->fileofs, FILESYSTEM_SEEK_HEAD );
+		Seek( fp, packfile->fileofs, FILESYSTEM_SEEK_HEAD );
 	
 		CPackFile *pf = new CZipPackFile( this );
 	
@@ -1186,7 +1193,7 @@ void CBaseFileSystem::AddMapPackFile( const char *pPath, const char *pPathID, Se
 			pf->SetPath( pathSymbol );
 			pf->m_lPackFileTime = GetFileTime( newPath );
 	
-			Trace_FClose( pf->m_hPackFileHandleFS );
+			Close( pf->m_hPackFileHandleFS );
 			pf->m_hPackFileHandleFS = nullptr;
 
 			m_ZipFiles.AddToTail( pf );
@@ -1221,7 +1228,7 @@ void CBaseFileSystem::BeginMapAccess()
 #endif
 				{
 					// Try opening the file as a regular file 
-					pPackFile->m_hPackFileHandleFS = Trace_FOpen( pPackFile->m_ZipName, "rb", 0, nullptr );
+					pPackFile->m_hPackFileHandleFS = HandleOpenAbsoluteFile( pPackFile->m_ZipName );
 
 // !NOTE! Pack files inside of VPK not supported
 //#if defined( SUPPORT_PACKED_STORE )
@@ -1253,7 +1260,7 @@ void CBaseFileSystem::EndMapAccess()
 				{
 					if ( pPackFile->m_hPackFileHandleFS )
 					{
-						Trace_FClose( pPackFile->m_hPackFileHandleFS );
+						Close( pPackFile->m_hPackFileHandleFS );
 						pPackFile->m_hPackFileHandleFS = nullptr;
 					}
 				}
@@ -5234,6 +5241,12 @@ int CFileHandle::GetSectorSize()
 {
 	Assert( IsValid() );
 
+	// GMod
+	if ( m_pAddonFileHandle )
+	{
+		return 1; // RaphaelIT7: FS_GetSectorSize really does nothing else for disk files either...
+	}
+
 	if ( m_pFile )
 	{
 		return m_fs->FS_GetSectorSize( m_pFile );
@@ -6007,4 +6020,13 @@ void CBaseFileSystem::GMOD_FixPathCase( char *pszPath, size_t nPathLength )
 	// This one must be done- though I got no idea as I can't find it in IDA
 	// We could try to use NormalizeGamePath here
 #endif
+}
+
+FileHandle_t CBaseFileSystem::HandleOpenAbsoluteFile( const char *pszAbsolutePath )
+{
+	CFileOpenInfo openInfo( this, pszAbsolutePath, nullptr, "rb", 0, nullptr );
+	openInfo.SetAbsolutePath( "%s", pszAbsolutePath );
+	HandleOpenRegularFile( openInfo, true );
+
+	return openInfo.m_pFileHandle;
 }

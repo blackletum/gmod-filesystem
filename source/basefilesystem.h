@@ -828,6 +828,9 @@ protected:
 	bool						RemoveVPKFile( const char *pPath, const char *pPathID );
 
 	void						HandleOpenRegularFile( CFileOpenInfo &openInfo, bool bIsAbsolutePath );
+	// GMod
+	// Calls HandleOpenRegularFile with a openInfo setup for rb with the given absoltue path
+	FileHandle_t				HandleOpenAbsoluteFile( const char *pszAbsolutePath );
 
 	FileHandle_t				FindFileInSearchPath( CFileOpenInfo &openInfo );
 	time_t						FastFileTime( const CSearchPath *path, const char *pFileName );
