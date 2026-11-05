@@ -5206,6 +5206,13 @@ CFileHandle::~CFileHandle()
 		m_pFile = nullptr;
 	}
 
+	// GMod
+	if ( m_pAddonFileHandle )
+	{
+		delete m_pAddonFileHandle;
+		m_pAddonFileHandle = nullptr;
+	}
+
 	m_nMagic = FREE_MAGIC;
 }
 
